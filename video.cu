@@ -35,13 +35,15 @@ using namespace std;
 
 VideoCapture cap;
 atomic<bool> getFrame;		// boolean telling when the camera frame is captured
-Mat imageMorphSelected;
-Mat imageRGB;
+Mat imageDenoiseSelected;
+Mat imageRAW, imageRGB;
 cuda::GpuMat    gpu_imageRAW,	// gpu matrix RAW image
 gpu_imageRGB, 	// gpu matrix RGB image
 gpu_imageHSV; 	// gpu matrix HSV image
 
 bool running = true;
+
+bool pauseVideo = false;
 
 
 /****************************************************************************************************************************************************************/
@@ -83,28 +85,30 @@ void *getImage(void *input)
     // capture opencv variable
     VideoCapture *cap = (VideoCapture*) input;
 
-
-    Mat imageRAW;			// frame of the camera// thresholded matrix
-
     // capture the frame until the user exists the program
     while(running){
         cap->grab();
         cap->retrieve(imageRAW);
 
         // if the captured frame is not empty, set getFrame flag to true
-        if(!imageRAW.empty()){
-
-            //store in gpu variable the RAW, RGB and HSV image
-            gpu_imageRAW.upload(imageRAW);
-            gpu_getRGBimage(gpu_imageRAW, gpu_imageRGB);
-            gpu_getHSVimage(gpu_imageRGB, gpu_imageHSV);
-
-            gpu_imageRGB.download(imageRGB);
+        if(!imageRAW.empty())
             getFrame.store(true);
-        }
     }
 
     pthread_exit(0);
+}
+
+void getImageRGB(){
+
+    //store in gpu variable the RAW, RGB and HSV image
+    gpu_imageRAW.upload(imageRAW);
+    gpu_getRGBimage(gpu_imageRAW, gpu_imageRGB);
+
+    cuda::gammaCorrection(gpu_imageRGB, gpu_imageRGB);
+
+    gpu_getHSVimage(gpu_imageRGB, gpu_imageHSV);
+
+
 }
 
 
@@ -129,7 +133,7 @@ __global__ void kernel_thresholdHSV(const cuda::PtrStepSz<uchar3> src, cuda::Ptr
 
     // if the pixel value is in the range then output is 255, else is 0
     if (v.x >= lH && v.x <= hH && v.y >= lS && v.y <= hS && v.z >= lV && v.z <= hV)
-        dst(y, x) = 255;
+        dst(y, x) = 1;
     else
         dst(y, x) = 0;
 
@@ -155,6 +159,106 @@ void gpu_thresholdHSV(cuda::GpuMat &src, Scalar &lowHSV, Scalar &highHSV,
     kernel_thresholdHSV<<<gridSize, blockSize>>>(src, dst, lowHSV[0], highHSV[0], lowHSV[1], highHSV[1], lowHSV[2], highHSV[2]);
 }
 
+
+__global__ void kernel_noiseReduction(const cuda::PtrStepSzb src, cuda::PtrStepSzb dst, int sizeMask) {
+    // get (x,y) coordinates
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    // if coordinates are out of the matrix size, return
+    if (x >= src.cols || y >= src.rows) return;
+
+    // get source pixel value
+    int v = src(y, x);
+
+    float value = 0;
+    int iStart = x-sizeMask/2;
+    int jStart = y-sizeMask/2;
+
+    if(v==0)
+        dst(y, x) = 0;
+    else{
+        for(int i=0; i<sizeMask; i++){
+            if(iStart+i>=0 && iStart+i<=src.cols){
+                for(int j=0; j<sizeMask; j++){
+                    if(jStart+j>=0 && jStart+j<=src.rows)
+                        value+=src(jStart+j, iStart+i);
+                }
+            }
+        }
+
+        value/=sizeMask*sizeMask;
+
+        if(value>0.5)
+            dst(y, x) = 1;
+        else
+            dst(y, x) = 0;
+    }
+}
+
+
+void gpu_noiseReduction(cuda::GpuMat &src, cuda::GpuMat &dst, int sizeMask) {
+
+    // allocating memory for output matrix
+    dst.create(src.size(), CV_8UC1);
+
+    // number of threads created to parallelize the computation
+    const int m = 32;
+    int numRows = src.rows, numCols = src.cols;
+    if (numRows == 0 || numCols == 0) return;
+
+    const dim3 gridSize(ceil((float)numCols / m), ceil((float)numRows / m), 1);
+    const dim3 blockSize(m, m, 1);
+
+    kernel_noiseReduction<<<gridSize, blockSize>>>(src, dst, sizeMask);
+}
+
+__global__ void kernel_centroid(const cuda::PtrStepSzb src, int* centroid) {
+    // get (x,y) coordinates
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    // if coordinates are out of the matrix size, return
+    if (x >= src.cols || y >= src.rows) return;
+
+    // get source pixel value
+    int v = src(y, x);
+
+    if(v){
+        atomicAdd(&centroid[0], x);
+        atomicAdd(&centroid[1], y);
+        atomicAdd(&centroid[2], 1);
+    }
+
+}
+
+void gpu_getCentroidImage(cuda::GpuMat &src, Point &centroid) {
+
+    // number of threads created to parallelize the computation
+    const int m = 32;
+    int numRows = src.rows, numCols = src.cols;
+    if (numRows == 0 || numCols == 0) return;
+
+    const dim3 gridSize(ceil((float)numCols / m), ceil((float)numRows / m), 1);
+    const dim3 blockSize(m, m, 1);
+
+    int n =3;
+    int moment[n] = {0,0,0};
+    int *dmoment;
+
+    cudaMalloc((void**)&dmoment,sizeof(int)*n);
+    cudaMemcpy(dmoment,&moment,sizeof(int)*n,cudaMemcpyHostToDevice);
+
+    kernel_centroid<<<gridSize, blockSize>>>(src, dmoment);
+
+    cudaMemcpy(&moment,dmoment,sizeof(int)*n,cudaMemcpyDeviceToHost);
+
+    int xcenter = (moment[0]/moment[2]) + 1;
+    int ycenter = (moment[1]/moment[2]) + 1;
+
+    centroid = Point(xcenter, ycenter);
+}
+
 /**********************************************************************    CPU functions        ******************************************************************/
 
 
@@ -174,11 +278,9 @@ void cameraInit(VideoCapture& cap){
     float gain=0.0;						// camera gain
     cap.set(CV_CAP_PROP_XI_SENSOR_FEATURE_VALUE,1);		// put camera on Zero ROT mode.
     // See details at ximea.com
-    cap.set(CV_CAP_PROP_XI_DOWNSAMPLING_TYPE,1);		// Seting downsampling type for skipping
-    cap.set(CV_CAP_PROP_XI_DOWNSAMPLING,2);			// do the skiping in 2x2
     cap.set(CV_CAP_PROP_XI_DATA_FORMAT,5);			// set capturing mode for RAW 8
     cap.set(CV_CAP_PROP_XI_AEAG,0);				// no automatic adjusment of exposure and gain
-    cap.set(CV_CAP_PROP_XI_EXPOSURE,800);			// set exposure (value in microseconds)
+    cap.set(CV_CAP_PROP_XI_EXPOSURE,9000);			// set exposure (value in microseconds)
     cap.set(CV_CAP_PROP_XI_GAIN,gain);				// adjust gain
     cap.set(CV_CAP_PROP_XI_OUTPUT_DATA_BIT_DEPTH,8);            // pixel size = 8 bits
     cap.set(CV_CAP_PROP_XI_AUTO_WB,0);				// no auto white background configurations
@@ -206,7 +308,6 @@ int createSocket(char* hostMachine, char* port, int& sockfd, addrinfo* p ){
         return 1;
     }
 
-
     // loop through all the results and make a socket
     for(p_temp = servinfo; p_temp != NULL; p_temp = p_temp->ai_next) {
         if ((sockfd = socket(p_temp->ai_family, p_temp->ai_socktype, p_temp->ai_protocol)) == -1) {
@@ -226,34 +327,24 @@ int createSocket(char* hostMachine, char* port, int& sockfd, addrinfo* p ){
     return 0;
 }
 
-/* getCentroidImage
- * function returning the cendroid of a matrix
- */
-void getCentroidImage(Mat image, Point& pos){
-
-    // computes the moments of the image
-    Moments oMoments = moments(image);
-
-    double dM01 = oMoments.m01;
-    double dM10 = oMoments.m10;
-    double dArea = oMoments.m00;
-
-    // mass center of the image
-    pos.x = dM10 / dArea;
-    pos.y = dM01 / dArea;
-}
 
 /* createControlInterface
  * function creating a user interface to control the HSV thresholding
  */
-void createControlInterface(int& nColor, int nbColors, int& iLowH, int& iHighH, int& iLowS, int& iHighS, int& iLowV, int& iHighV, int& sizeMorph){
+void createControlInterface(int& nColor, int nbColors, int& iLowH, int& iHighH, int& iLowS, int& iHighS, int& iLowV, int& iHighV, int& sizeMask){
 
     // create opencv window
-    const char* nWindow = "HSV Threshold result";
-    namedWindow(nWindow, WINDOW_NORMAL);
+    const char* nWindow = "XIMEA camera";
+    namedWindow(nWindow, WINDOW_GUI_NORMAL);
+    resizeWindow("XIMEA camera", 640,682);
 
-    // create number target trackbar
-    cvCreateTrackbar("Select target", nWindow, &nColor, nbColors-1);
+    namedWindow("out", WINDOW_GUI_NORMAL);
+    resizeWindow("out", 640,512);
+
+    if(nbColors>1){
+        // create number target trackbar
+        cvCreateTrackbar("Select target", nWindow, &nColor, nbColors-1);
+    }
 
     // create Hue trackbar
     cvCreateTrackbar("LowH", nWindow, &iLowH, 179);
@@ -267,7 +358,7 @@ void createControlInterface(int& nColor, int nbColors, int& iLowH, int& iHighH, 
     cvCreateTrackbar("LowV", nWindow, &iLowV, 255);
     cvCreateTrackbar("HighV", nWindow, &iHighV, 255);
 
-    cvCreateTrackbar("Size Morph", nWindow, &sizeMorph, 15);
+    cvCreateTrackbar("Size Mask", nWindow, &sizeMask, 15);
 }
 
 
@@ -275,18 +366,27 @@ void createControlInterface(int& nColor, int nbColors, int& iLowH, int& iHighH, 
 /* onMouse
  * function called when using mouse in opencv window
  */
-static void onMouse( int event, int x, int y, int f, void* p){
+static void onMouse( int event, int x, int y, int f, void* input){
 
     // if there is a click on the image
     if (event == CV_EVENT_LBUTTONDOWN){
+
         // convert the pixel value in HSV value
         Mat HSV;
         Mat RGB=imageRGB(Rect(x,y,1,1));
         cvtColor(RGB, HSV,CV_BGR2HSV);
         Vec3b hsv=HSV.at<Vec3b>(0,0);
 
+        string statusBarText = "H: "+ to_string(hsv[0]) + ", S: "+ to_string(hsv[1]) + ", V: "+ to_string(hsv[2]);
+        displayOverlay("XIMEA camera", statusBarText, 0);
+
         // print HSV value
         cout<<"HSV : "<<hsv<<"\t(x,y) : ("<<x<<","<<y<<")"<<endl;
+    }
+
+    // if there is a click on the image
+    if (event == CV_EVENT_MBUTTONDOWN){
+        pauseVideo = !pauseVideo;
     }
 }
 
@@ -298,39 +398,14 @@ struct ColorStruct{
     int numColor;		// color number
     Scalar lowHSV;
     Scalar highHSV;
-    int sizeMorph;
+    int sizeMask;
     Scalar RGB;
     Point pos;			// coordinates of the color centroid
     atomic<bool> compute;	// boolean to know when to compute
     atomic<bool> send;          // boolean to know when to send the pos
     bool selected = false;
+    int count;
 };
-
-
-/* gpu_morphImage
- * function opening and closing the image with an element of size sizeMorph
- */
-void gpu_morphImage(cuda::GpuMat gpu_imageThresh, cuda::GpuMat& gpu_imageMorph, int& sizeMorph){
-
-    if(sizeMorph == 0)
-        sizeMorph=1;
-
-    // creating the element of size sizeMorph
-    Mat element = getStructuringElement(MORPH_ELLIPSE, Size(sizeMorph, sizeMorph));
-    //cuda::GpuMat gpu_element(element);
-
-    //create the dilate and erode filter
-    Ptr<cuda::Filter> dilateFilter = cuda::createMorphologyFilter(MORPH_DILATE, gpu_imageThresh.type(), element);
-    Ptr<cuda::Filter> erodeFilter = cuda::createMorphologyFilter(MORPH_ERODE, gpu_imageThresh.type(), element);
-
-    // opening the image
-    erodeFilter->apply(gpu_imageThresh, gpu_imageThresh);
-    dilateFilter->apply(gpu_imageThresh, gpu_imageThresh);
-
-    //closing the image
-    dilateFilter->apply(gpu_imageThresh, gpu_imageThresh);
-    erodeFilter->apply(gpu_imageThresh, gpu_imageMorph);
-}
 
 
 /* getPosColor
@@ -340,13 +415,9 @@ void* getPosColor(void *input){
 
     // get the input structure which corresponds to a color to detect
     ColorStruct *color = static_cast<ColorStruct*>(input);
-
-    Mat imageMorph;
-
-    int sizeMorph =4;
     
     cuda::GpuMat    gpu_imageThresh,	// gpu matrix thresholded image
-                    gpu_imageMorph;
+            gpu_imageDenoise;
 
     while(running){
 
@@ -359,19 +430,21 @@ void* getPosColor(void *input){
             // threshold image from selected HSV range
             gpu_thresholdHSV(gpu_imageHSV, color->lowHSV, color->highHSV, gpu_imageThresh);
 
-            gpu_morphImage(gpu_imageThresh, gpu_imageMorph, sizeMorph);
-
-            //store in CPU matrix the thresholded image
-            gpu_imageMorph.download(imageMorph);
+            if(color->sizeMask>1)
+                gpu_noiseReduction(gpu_imageThresh, gpu_imageDenoise, color->sizeMask);
 
             // compute centroid of thresholded image
-            getCentroidImage(imageMorph, color->pos);
+            gpu_getCentroidImage(gpu_imageDenoise, color->pos);
 
-            if(color->selected)
-                imageMorphSelected = imageMorph;
+            if(color->selected){
+                //store in CPU matrix the thresholded image
+                gpu_imageDenoise.download(imageDenoiseSelected);
+            }
 
             // ready to send pos
             color->send.store(true);
+
+            color->count ++;
         }
     }
 
@@ -398,7 +471,7 @@ int main(int argc, char *argv[])
     int count = 0;
 
     // if chosen mode is "test" ***************************************************
-    if (mode == "test"){
+    if (mode == "test" && argc>2){
 
         // get number of colors to detect
         int nbColors = atoi(argv[2]);
@@ -422,7 +495,7 @@ int main(int argc, char *argv[])
             colors[i].pos = Point(0,0);
             colors[i].lowHSV = Scalar(0,0,0);
             colors[i].highHSV = Scalar(179,255,255);
-            colors[i].sizeMorph = 1;
+            colors[i].sizeMask = 1;
             // create the threads
             pthread_create(&threads[i], NULL, getPosColor, (void *)& colors[i]);
         }
@@ -431,12 +504,12 @@ int main(int argc, char *argv[])
         int lowH = 0, highH = 179;
         int lowS = 0, highS = 255;
         int lowV = 0, highV = 255;
-        int sizeMorph = 3;
-        int nColor = 1;
-        int nColor_temp = 1;
+        int sizeMask = 3;
+        int nColor = 0;
+        int nColor_temp = 0;
 
         // create user interface to control the HSV values
-        createControlInterface(nColor, nbColors, lowH, highH, lowS, highS, lowV, highV, sizeMorph);
+        createControlInterface(nColor, nbColors, lowH, highH, lowS, highS, lowV, highV, sizeMask);
 
         while(1){
 
@@ -446,16 +519,18 @@ int main(int argc, char *argv[])
                 // set value to false
                 getFrame.store(false);
 
+                getImageRGB();
+
                 if(nColor_temp!=nColor){
-                    setTrackbarPos("LowH", "HSV Threshold result", colors[nColor].lowHSV[0]);
-                    setTrackbarPos("LowS", "HSV Threshold result", colors[nColor].lowHSV[1]);
-                    setTrackbarPos("LowV", "HSV Threshold result", colors[nColor].lowHSV[2]);
+                    setTrackbarPos("LowH", "XIMEA camera", colors[nColor].lowHSV[0]);
+                    setTrackbarPos("LowS", "XIMEA camera", colors[nColor].lowHSV[1]);
+                    setTrackbarPos("LowV", "XIMEA camera", colors[nColor].lowHSV[2]);
 
-                    setTrackbarPos("HighH", "HSV Threshold result", colors[nColor].highHSV[0]);
-                    setTrackbarPos("HighS", "HSV Threshold result", colors[nColor].highHSV[1]);
-                    setTrackbarPos("HighV", "HSV Threshold result", colors[nColor].highHSV[2]);
+                    setTrackbarPos("HighH", "XIMEA camera", colors[nColor].highHSV[0]);
+                    setTrackbarPos("HighS", "XIMEA camera", colors[nColor].highHSV[1]);
+                    setTrackbarPos("HighV", "XIMEA camera", colors[nColor].highHSV[2]);
 
-                    setTrackbarPos("Size Morph", "HSV Threshold result", colors[nColor].sizeMorph);
+                    setTrackbarPos("Size Mask", "HSV Threshold result", colors[nColor].sizeMask);
                     nColor_temp = nColor;
                 }
                 else{
@@ -463,26 +538,31 @@ int main(int argc, char *argv[])
                     colors[nColor].lowHSV = Scalar(lowH, lowS, lowV);
                     colors[nColor].highHSV = Scalar(highH, highS, highV);
 
-                    colors[nColor].sizeMorph = sizeMorph;
+                    colors[nColor].sizeMask = sizeMask;
                 }
 
-                for (int i=0; i<nbColors; i++){
-
-                    if(i == nColor)
-                        colors[i].selected = true;
-                    else
-                        colors[i].selected = false;
-
-                    colors[i].compute.store(true);
-
-                    // create circle over RGB image to show the position of detected color
-                    circle(imageRGB, colors[i].pos, 3, colors[i].RGB, 2 );
-                }
-
-                if(!imageMorphSelected.empty()){
+                if(!imageDenoiseSelected.empty()){
                     // show thresholded image (black and white mask)
-                    imshow("out", imageMorphSelected);
-                    waitKey(2);
+                    imshow("out", 255*imageDenoiseSelected);
+                    waitKey(1);
+                }
+
+                if(!pauseVideo){
+
+                    gpu_imageRGB.download(imageRGB);
+
+                    for (int i=0; i<nbColors; i++){
+
+                        if(i == nColor)
+                            colors[i].selected = true;
+                        else
+                            colors[i].selected = false;
+
+                        colors[i].compute.store(true);
+
+                        // create circle over RGB image to show the position of detected color
+                        circle(imageRGB, colors[i].pos, 3, colors[i].RGB, 2 );
+                    }
                 }
 
                 // show RGB image with the circle
@@ -491,19 +571,15 @@ int main(int argc, char *argv[])
 
                 // set the mouse callback function to get the HSV pixel value
                 setMouseCallback( "XIMEA camera", onMouse, NULL);
-
             }
         }
     }
 
     // if chosen mode is "led" ***************************************************
-    else if (mode == "led"){
+    else if (mode == "led" && argc>2){
 
         // initialize camera settings
         cameraInit(cap);
-
-        // RGB CPU images
-        Mat imageThresh;
 
         cuda::GpuMat 	gpu_imageThresh;	// gpu matrix thresholded image
 
@@ -528,14 +604,14 @@ int main(int argc, char *argv[])
                 // store false value
                 getFrame.store(false);
 
+                //store in gpu variable the RAW image
+                gpu_imageRAW.upload(imageRAW);
+
                 // threshold the intensity value
                 cuda::threshold(gpu_imageRAW, gpu_imageThresh, ILOWV, 1, THRESH_BINARY);
 
-                // store in CPU matrix the thresholded image
-                gpu_imageThresh.download(imageThresh);
-
                 // compute centroid
-                getCentroidImage(imageThresh, pos);
+                gpu_getCentroidImage(gpu_imageThresh, pos);
 
                 // send via UDP the position
                 sendto(sockfd, &pos, sizeof(pos), 0, p->ai_addr, p->ai_addrlen);
@@ -550,7 +626,7 @@ int main(int argc, char *argv[])
     }
 
     // if chosen mode is "color" ***************************************************
-    else if (mode == "color"){
+    else if (mode == "color" && argc>2){
 
         // get number of colors to detect
         int nbColors = atoi(argv[4]);
@@ -580,34 +656,50 @@ int main(int argc, char *argv[])
         // initialize the structures
         for (int i=0; i<nbColors; i++){
             colors[i].numColor = i;				// color number
-            colors[i].lowHSV = Scalar(atoi(argv[6*i + 5]), atoi(argv[6*i + 7]), atoi(argv[6*i + 9]));
-            colors[i].highHSV = Scalar(atoi(argv[6*i + 6]), atoi(argv[6*i + 8]), atoi(argv[6*i + 10]));
+            Scalar lowHSV = Scalar(atoi(argv[6*i + 5]), atoi(argv[6*i + 7]), atoi(argv[6*i + 9]));
+            colors[i].lowHSV = lowHSV;
+            Scalar highHSV = Scalar(atoi(argv[6*i + 6]), atoi(argv[6*i + 8]), atoi(argv[6*i + 10]));
+            colors[i].highHSV = highHSV;
             colors[i].pos = Point(0,0);				// position of detected color
             colors[i].compute.store(false);				// if ready to compute pos
             colors[i].send.store(false);				// if ready to send pos
+            colors[i].sizeMask = 3;
+            colors[i].count = 0;
 
             // create the threads
-            pthread_create(&threads[i], NULL, getPosColor, (void *)& colors[i]);
+            //pthread_create(&threads[i], NULL, getPosColor, (void *)& colors[i]);
         }
+
 
         time(&start);
 
-        while(count<10000){
+        cuda::GpuMat 	gpu_image[nbColors];
+
+        while(count<5000){
 
             // if frame captures
             if(getFrame){
                 // store false value
                 getFrame.store(false);
 
+                getImageRGB();
+
                 // go through the colors
                 for(int i=0; i<nbColors; i++){
+
+                    gpu_thresholdHSV(gpu_imageRAW, colors[i].lowHSV, colors[i].highHSV, gpu_image[i]);
+
+                    gpu_noiseReduction(gpu_image[i], gpu_image[i], colors[i].sizeMask);
+
+                    gpu_getCentroidImage(gpu_image[i], colors[i].pos);
+
                     // ready to compute
-                    colors[i].compute.store(true);
+                    //colors[i].compute.store(true);
 
                     // if ready to send pos values
-                    if(colors[i].send){
+                    //if(colors[i].send){
                         // store false value
-                        colors[i].send.store(false);
+                        //colors[i].send.store(false);
 
                         // create message to send : [color numver, pos.x, pos.y]
                         int message[3] = {colors[i].numColor, colors[i].pos.x, colors[i].pos.y};
@@ -619,7 +711,7 @@ int main(int argc, char *argv[])
                         sendto(sockfd, &message, sizeof(message), 0, p->ai_addr, p->ai_addrlen);
 
                         if(i==0)count ++;
-                    }
+                    //}
                 }
             }
         }
@@ -638,6 +730,7 @@ int main(int argc, char *argv[])
 
     double fps  = count / seconds;
     cout << "Estimated frames per second : " << fps << endl;
+
     
     //cap.release();
 
