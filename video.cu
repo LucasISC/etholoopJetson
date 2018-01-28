@@ -684,7 +684,7 @@ int main(int argc, char *argv[])
             colors[i].pos = Point(0,0);				// position of detected color
             colors[i].compute.store(false);				// if ready to compute pos
             colors[i].send.store(false);				// if ready to send pos
-            colors[i].sizeMask = atoi(argv[6*i + 10]);
+            colors[i].sizeMask = atoi(argv[6*i + 11]);
             colors[i].count = 0;
 
             // create the threads
@@ -696,7 +696,7 @@ int main(int argc, char *argv[])
 
         cuda::GpuMat 	gpu_image[nbColors];
 
-        while(count<5000){
+        while(count<500000){
 
             // if frame captures
             if(getFrame){
@@ -753,7 +753,7 @@ int main(int argc, char *argv[])
     cout << "Estimated frames per second : " << fps << endl;
 
     
-    //cap.release();
+    cap.release();
 
     return 0;
 }
