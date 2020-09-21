@@ -318,8 +318,9 @@ void* getPosColor(void *input){
 			gpu_imageRAW.upload(imageRAW);
 	        gpu_getRGBimage(gpu_imageRAW, gpu_imageRGB);
 	        
-			Ptr<cuda::Filter> filter = cuda::createGaussianFilter(gpu_imageRGB.type(), gpu_imageRGB.type(), Size(21,21), 0);
-			filter->apply(gpu_imageRGB, gpu_imageRGB);
+			
+			/*Ptr<cuda::Filter> filter = cuda::createGaussianFilter(gpu_imageRGB.type(), gpu_imageRGB.type(), Size(21,21), 0);
+			filter->apply(gpu_imageRGB, gpu_imageRGB);*/
 	        
 	        gpu_getHSVimage(gpu_imageRGB, gpu_imageHSV);
 	        
@@ -412,12 +413,12 @@ int main(int argc, char *argv[])
 				gpu_imageRAW.upload(imageRAW);
 	        	gpu_getRGBimage(gpu_imageRAW, gpu_imageRGB);
 			
-			auto start = chrono::steady_clock::now();
+			/*auto start = chrono::steady_clock::now();
 			Ptr<cuda::Filter> filter = cuda::createGaussianFilter(gpu_imageRGB.type(), gpu_imageRGB.type(), Size(21,21), 0);
 			filter->apply(gpu_imageRGB, gpu_imageRGB);
 			auto end = chrono::steady_clock::now();
 
-			auto diff = end - start;
+			auto diff = end - start;*/
 			//cout << "noise time : " << chrono::duration <double, milli> (diff).count() << " ms" << endl;
 
 	        	gpu_getHSVimage(gpu_imageRGB, gpu_imageHSV);
