@@ -26,7 +26,7 @@
 #define ILOWV 20
 #define WB_BLUE 2
 #define WB_GREEN 1
-#define WB_RED 1.3
+#define WB_RED 1
 
 /****************************************************************    Defining Global Variables        ***********************************************************/
 
@@ -36,7 +36,7 @@ using namespace std;
 VideoCapture cap;
 atomic<bool> getFrame;		// boolean telling when the camera frame is captured
 Mat imageDenoiseSelected;
-Mat imageRAW, imageRGB;
+Mat imageRAW, imageRGB, imageSHOWN;
 cuda::GpuMat    gpu_imageRAW,	// gpu matrix RAW image
 gpu_imageRGB, 	// gpu matrix RGB image
 gpu_imageHSV; 	// gpu matrix HSV image
@@ -253,8 +253,8 @@ void gpu_getCentroidImage(cuda::GpuMat &src, Point &centroid) {
 
     cudaMemcpy(&moment,dmoment,sizeof(int)*n,cudaMemcpyDeviceToHost);
 
-    int xcenter = (moment[0]/moment[2]) + 1;
-    int ycenter = (moment[1]/moment[2]) + 1;
+    int xcenter = (moment[0]/moment[2]);
+    int ycenter = (moment[1]/moment[2]);
 
     centroid = Point(xcenter, ycenter);
 }
@@ -280,7 +280,7 @@ void cameraInit(VideoCapture& cap){
     // See details at ximea.com
     cap.set(CV_CAP_PROP_XI_DATA_FORMAT,5);			// set capturing mode for RAW 8
     cap.set(CV_CAP_PROP_XI_AEAG,0);				// no automatic adjusment of exposure and gain
-    cap.set(CV_CAP_PROP_XI_EXPOSURE,9000);			// set exposure (value in microseconds)
+    cap.set(CV_CAP_PROP_XI_EXPOSURE,4000);			// set exposure (value in microseconds)
     cap.set(CV_CAP_PROP_XI_GAIN,gain);				// adjust gain
     cap.set(CV_CAP_PROP_XI_OUTPUT_DATA_BIT_DEPTH,8);            // pixel size = 8 bits
     cap.set(CV_CAP_PROP_XI_AUTO_WB,0);				// no auto white background configurations
@@ -403,7 +403,7 @@ struct ColorStruct{
     Point pos;			// coordinates of the color centroid
     atomic<bool> compute;	// boolean to know when to compute
     atomic<bool> send;          // boolean to know when to send the pos
-    bool selected = false;
+    bool selected;
     int count;
 };
 
@@ -495,9 +495,10 @@ int main(int argc, char *argv[])
             colors[i].pos = Point(0,0);
             colors[i].lowHSV = Scalar(0,0,0);
             colors[i].highHSV = Scalar(179,255,255);
-            colors[i].sizeMask = 1;
+            colors[i].sizeMask = 3;
+            colors[i].selected = false;
             // create the threads
-            pthread_create(&threads[i], NULL, getPosColor, (void *)& colors[i]);
+            //pthread_create(&threads[i], NULL, getPosColor, (void *)& colors[i]);
         }
 
         // HSV range variables
@@ -511,6 +512,8 @@ int main(int argc, char *argv[])
         // create user interface to control the HSV values
         createControlInterface(nColor, nbColors, lowH, highH, lowS, highS, lowV, highV, sizeMask);
 
+        cuda::GpuMat 	gpu_image[nbColors];
+
         while(1){
 
             // if got frame
@@ -521,7 +524,24 @@ int main(int argc, char *argv[])
 
                 getImageRGB();
 
+                // go through the colors
+                for(int i=0; i<nbColors; i++){
+
+                    gpu_thresholdHSV(gpu_imageHSV, colors[i].lowHSV, colors[i].highHSV, gpu_image[i]);
+
+                    gpu_noiseReduction(gpu_image[i], gpu_image[i], colors[i].sizeMask);
+
+                    if(colors[i].selected){
+                        //store in CPU matrix the thresholded image
+                        gpu_image[i].download(imageDenoiseSelected);
+                    }
+
+                    gpu_getCentroidImage(gpu_image[i], colors[i].pos);
+
+                }
+
                 if(nColor_temp!=nColor){
+
                     setTrackbarPos("LowH", "XIMEA camera", colors[nColor].lowHSV[0]);
                     setTrackbarPos("LowS", "XIMEA camera", colors[nColor].lowHSV[1]);
                     setTrackbarPos("LowV", "XIMEA camera", colors[nColor].lowHSV[2]);
@@ -530,7 +550,7 @@ int main(int argc, char *argv[])
                     setTrackbarPos("HighS", "XIMEA camera", colors[nColor].highHSV[1]);
                     setTrackbarPos("HighV", "XIMEA camera", colors[nColor].highHSV[2]);
 
-                    setTrackbarPos("Size Mask", "HSV Threshold result", colors[nColor].sizeMask);
+                    setTrackbarPos("Size Mask", "XIMEA camera", colors[nColor].sizeMask);
                     nColor_temp = nColor;
                 }
                 else{
@@ -550,6 +570,7 @@ int main(int argc, char *argv[])
                 if(!pauseVideo){
 
                     gpu_imageRGB.download(imageRGB);
+                    gpu_imageRGB.download(imageSHOWN);
 
                     for (int i=0; i<nbColors; i++){
 
@@ -561,12 +582,12 @@ int main(int argc, char *argv[])
                         colors[i].compute.store(true);
 
                         // create circle over RGB image to show the position of detected color
-                        circle(imageRGB, colors[i].pos, 3, colors[i].RGB, 2 );
+                        circle(imageSHOWN, colors[i].pos, 3, colors[i].RGB, 2 );
                     }
                 }
 
                 // show RGB image with the circle
-                imshow("XIMEA camera", imageRGB);
+                imshow("XIMEA camera", imageSHOWN);
                 waitKey(1);
 
                 // set the mouse callback function to get the HSV pixel value
@@ -632,7 +653,7 @@ int main(int argc, char *argv[])
         int nbColors = atoi(argv[4]);
 
         // if the number of arguments is not exact return, has to be 6*nbColors + 4 arguments
-        if(argc != 6*nbColors + 5){
+        if(argc != 7*nbColors + 5){
             cout<<"not the correct number of arguments"<<endl;
             return 0;
         }
@@ -663,7 +684,7 @@ int main(int argc, char *argv[])
             colors[i].pos = Point(0,0);				// position of detected color
             colors[i].compute.store(false);				// if ready to compute pos
             colors[i].send.store(false);				// if ready to send pos
-            colors[i].sizeMask = 3;
+            colors[i].sizeMask = atoi(argv[6*i + 10]);
             colors[i].count = 0;
 
             // create the threads
@@ -687,7 +708,7 @@ int main(int argc, char *argv[])
                 // go through the colors
                 for(int i=0; i<nbColors; i++){
 
-                    gpu_thresholdHSV(gpu_imageRAW, colors[i].lowHSV, colors[i].highHSV, gpu_image[i]);
+                    gpu_thresholdHSV(gpu_imageHSV, colors[i].lowHSV, colors[i].highHSV, gpu_image[i]);
 
                     gpu_noiseReduction(gpu_image[i], gpu_image[i], colors[i].sizeMask);
 
