@@ -688,7 +688,7 @@ int main(int argc, char *argv[])
             colors[i].pos = Point(0,0);				// position of detected color
             colors[i].compute.store(false);				// if ready to compute pos
             colors[i].send.store(false);				// if ready to send pos
-            colors[i].sizeMask = atoi(argv[6*i + 11]);
+            colors[i].sizeMask = atoi(argv[7*i + 11]);
             colors[i].count = 0;
 
             // create the threads
