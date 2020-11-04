@@ -681,9 +681,9 @@ int main(int argc, char *argv[])
         // initialize the structures
         for (int i=0; i<nbColors; i++){
             colors[i].numColor = i;				// color number
-            Scalar lowHSV = Scalar(atoi(argv[6*i + 5]), atoi(argv[6*i + 7]), atoi(argv[6*i + 9]));
+            Scalar lowHSV = Scalar(atoi(argv[7*i + 5]), atoi(argv[7*i + 7]), atoi(argv[7*i + 9]));
             colors[i].lowHSV = lowHSV;
-            Scalar highHSV = Scalar(atoi(argv[6*i + 6]), atoi(argv[6*i + 8]), atoi(argv[6*i + 10]));
+            Scalar highHSV = Scalar(atoi(argv[7*i + 6]), atoi(argv[7*i + 8]), atoi(argv[7*i + 10]));
             colors[i].highHSV = highHSV;
             colors[i].pos = Point(0,0);				// position of detected color
             colors[i].compute.store(false);				// if ready to compute pos
