@@ -136,7 +136,7 @@ __global__ void kernel_thresholdHSV(const cuda::PtrStepSz<uchar3> src, cuda::Ptr
     // if the pixel value is in the range then output is 255, else is 0
     if (lH<hH && v.x >= lH && v.x <= hH && v.y >= lS && v.y <= hS && v.z >= lV && v.z <= hV)
         dst(y, x) = 1;
-    else if (lH>hH && (v.x <= lH || v.x >= hH) && v.y >= lS && v.y <= hS && v.z >= lV && v.z <= hV)
+    else if (lH>hH && (v.x <= hH || v.x >= lH) && v.y >= lS && v.y <= hS && v.z >= lV && v.z <= hV)
         dst(y, x) = 1;
     else
         dst(y, x) = 0;
