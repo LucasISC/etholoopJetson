@@ -405,6 +405,7 @@ struct ColorStruct{
     int sizeMask;
     Scalar RGB;
     Point pos;			// coordinates of the color centroid
+    Point posOld;
     atomic<bool> compute;	// boolean to know when to compute
     atomic<bool> send;          // boolean to know when to send the pos
     bool selected;
@@ -686,6 +687,7 @@ int main(int argc, char *argv[])
             Scalar highHSV = Scalar(atoi(argv[7*i + 6]), atoi(argv[7*i + 8]), atoi(argv[7*i + 10]));
             colors[i].highHSV = highHSV;
             colors[i].pos = Point(0,0);				// position of detected color
+	    colors[i].posOld = Point(0,0);
             colors[i].compute.store(false);				// if ready to compute pos
             colors[i].send.store(false);				// if ready to send pos
             colors[i].sizeMask = atoi(argv[7*i + 11]);
@@ -718,6 +720,8 @@ int main(int argc, char *argv[])
 
                     gpu_getCentroidImage(gpu_image[i], colors[i].pos);
 
+		    
+
                     // ready to compute
                     //colors[i].compute.store(true);
 
@@ -727,7 +731,8 @@ int main(int argc, char *argv[])
                         //colors[i].send.store(false);
 
                         // create message to send : [color numver, pos.x, pos.y]
-                        int message[3] = {colors[i].numColor, colors[i].pos.x, colors[i].pos.y};
+		    if(colors[i].pos != Point(0,0) && colors[i].posOld != Point(0,0)){
+                        int message[3] = {colors[i].numColor, colors[i].posOld.x, colors[i].posOld.y};
 
                         // print message
                         cout<<count<<"\tmessage :"<<message[0]<<" "<<message[1]<<" "<<message[2]<<" "<<endl;
@@ -737,6 +742,9 @@ int main(int argc, char *argv[])
 
                         if(i==0)count ++;
                     //}
+                    }
+
+ 		    colors[i].posOld = colors[i].pos;
                 }
             }
         }
