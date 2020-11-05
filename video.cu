@@ -697,6 +697,7 @@ int main(int argc, char *argv[])
             //pthread_create(&threads[i], NULL, getPosColor, (void *)& colors[i]);
         }
 
+        int message[3];
 
         time(&start);
 
@@ -719,13 +720,19 @@ int main(int argc, char *argv[])
                     gpu_noiseReduction(gpu_image[i], gpu_image[i], colors[i].sizeMask);
 
                     gpu_getCentroidImage(gpu_image[i], colors[i].pos);
+                    
+                    
 
 
 		            if(colors[i].pos != Point(0,0) && colors[i].posOld != Point(0,0)){
-                        int message[3] = {colors[i].numColor, colors[i].posOld.x, colors[i].posOld.y};
+                        message[0] = colors[i].numColor;
+                        message[1] = colors[i].posOld.x;
+                        message[2] = colors[i].posOld.y;
                     }
                     else{
-                        int message[3] = {colors[i].numColor, 0, 0};
+                        message[0] = colors[i].numColor;
+                        message[1] = 0;
+                        message[2] = 0;
                     }
                     
                     // print message
