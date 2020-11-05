@@ -720,31 +720,22 @@ int main(int argc, char *argv[])
 
                     gpu_getCentroidImage(gpu_image[i], colors[i].pos);
 
-		    
 
-                    // ready to compute
-                    //colors[i].compute.store(true);
-
-                    // if ready to send pos values
-                    //if(colors[i].send){
-                        // store false value
-                        //colors[i].send.store(false);
-
-                        // create message to send : [color numver, pos.x, pos.y]
-		    if(colors[i].pos != Point(0,0) && colors[i].posOld != Point(0,0)){
+		            if(colors[i].pos != Point(0,0) && colors[i].posOld != Point(0,0)){
                         int message[3] = {colors[i].numColor, colors[i].posOld.x, colors[i].posOld.y};
-
-                        // print message
-                        cout<<count<<"\tmessage :"<<message[0]<<" "<<message[1]<<" "<<message[2]<<" "<<endl;
-
-                        // send message via udp
-                        sendto(sockfd, &message, sizeof(message), 0, p->ai_addr, p->ai_addrlen);
-
-                        if(i==0)count ++;
-                    //}
                     }
+                    else{
+                        int message[3] = {colors[i].numColor, 0, 0};
+                    }
+                    
+                    // print message
+                    cout<<count<<"\tmessage :"<<message[0]<<" "<<message[1]<<" "<<message[2]<<" "<<endl;
 
- 		    colors[i].posOld = colors[i].pos;
+                    // send message via udp
+                    sendto(sockfd, &message, sizeof(message), 0, p->ai_addr, p->ai_addrlen);
+
+                    if(i==0)count ++;
+ 		            colors[i].posOld = colors[i].pos;
                 }
             }
         }
