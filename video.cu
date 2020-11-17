@@ -183,9 +183,9 @@ __global__ void kernel_noiseReduction(const cuda::PtrStepSzb src, cuda::PtrStepS
         dst(y, x) = 0;
     else{
         for(int i=0; i<sizeMask; i++){
-            if(iStart+i>=0 && iStart+i<=src.cols){
+            if(iStart+i>=0 && iStart+i<src.cols){
                 for(int j=0; j<sizeMask; j++){
-                    if(jStart+j>=0 && jStart+j<=src.rows)
+                    if(jStart+j>=0 && jStart+j<src.rows)
                         value+=src(jStart+j, iStart+i);
                 }
             }
