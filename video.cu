@@ -564,6 +564,8 @@ int main(int argc, char *argv[])
                     colors[nColor].highHSV = Scalar(highH, highS, highV);
 
                     colors[nColor].sizeMask = sizeMask;
+                    
+                    cout<<"HSVm:"<<lowH<<","<<highH<<","<<lowS<<","<<highS<<","<<lowV<<","<<highV<<","<<sizeMask<<endl; 
                 }
 
                 if(!imageDenoiseSelected.empty()){
@@ -643,7 +645,7 @@ int main(int argc, char *argv[])
                 sendto(sockfd, &pos, sizeof(pos), 0, p->ai_addr, p->ai_addrlen);
 
                 // print position value
-                cout<<count<<"\t"<<pos.x<<"\t"<<pos.y<<endl;
+                //cout<<count<<"\t"<<pos.x<<"\t"<<pos.y<<endl;
 
                 count++;
             }
@@ -687,7 +689,7 @@ int main(int argc, char *argv[])
             Scalar highHSV = Scalar(atoi(argv[7*i + 6]), atoi(argv[7*i + 8]), atoi(argv[7*i + 10]));
             colors[i].highHSV = highHSV;
             colors[i].pos = Point(0,0);				// position of detected color
-	    colors[i].posOld = Point(0,0);
+	        colors[i].posOld = Point(0,0);
             colors[i].compute.store(false);				// if ready to compute pos
             colors[i].send.store(false);				// if ready to send pos
             colors[i].sizeMask = atoi(argv[7*i + 11]);
@@ -720,8 +722,6 @@ int main(int argc, char *argv[])
                     gpu_noiseReduction(gpu_image[i], gpu_image[i], colors[i].sizeMask);
 
                     gpu_getCentroidImage(gpu_image[i], colors[i].pos);
-                    
-                    
 
 
 		            if(colors[i].pos != Point(0,0) && colors[i].posOld != Point(0,0)){
@@ -736,7 +736,7 @@ int main(int argc, char *argv[])
                     }
                     
                     // print message
-                    cout<<count<<"\tmessage :"<<message[0]<<" "<<message[1]<<" "<<message[2]<<" "<<endl;
+                    //cout<<count<<"\tmessage :"<<message[0]<<" "<<message[1]<<" "<<message[2]<<" "<<endl;
 
                     // send message via udp
                     sendto(sockfd, &message, sizeof(message), 0, p->ai_addr, p->ai_addrlen);
