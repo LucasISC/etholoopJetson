@@ -708,7 +708,7 @@ int main(int argc, char *argv[])
                     }
 
                     // print message
-                    //cout<<count<<"\tmessage :"<<message[0]<<" "<<message[1]<<" "<<message[2]<<" "<<endl;
+                    cout<<count<<"\tmessage :"<<message[0]<<" "<<message[1]<<" "<<message[2]<<" "<<endl;
 
                     // send message via udp
                     sendto(sockfd, &message, sizeof(message), 0, p->ai_addr, p->ai_addrlen);
