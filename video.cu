@@ -565,7 +565,7 @@ int main(int argc, char *argv[])
 
                 if(key == 27 || key == 113){
                     for(int i=0; i<nbColors; i++)
-                        cout<<"nHSVm:"<<i<<","<<lowH<<" "<<highH<<" "<<lowS<<" "<<highS<<" "<<lowV<<" "<<highV<<" "<<sizeMask<<endl;
+                        cout<<"nHSVm:"<<i<<","<<colors[i].lowHSV[0]<<" "<<colors[i].lowHSV[1]<<" "<<colors[i].lowHSV[2]<<" "<<colors[i].highHSV[0]<<" "<<colors[i].highHSV[1]<<" "<<colors[i].highHSV[2]<<" "<<sizeMask<<endl;
                     destroyAllWindows();
                     break;
                 }
