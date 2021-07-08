@@ -466,7 +466,7 @@ int main(int argc, char *argv[])
 
         for(int i=0; i<nbColors; i++){
             colors[i].numColor = i;
-            colors[i].RGB = Scalar(atoi(argv[10*i + 3]), atoi(argv[10*i + 4]), atoi(argv[10*i + 5]));
+            colors[i].RGB = Scalar(atoi(argv[10*i + 5]), atoi(argv[10*i + 4]), atoi(argv[10*i + 3]));
             colors[i].pos = Point(0,0);
             colors[i].lowHSV = Scalar(0,0,0);
             colors[i].highHSV = Scalar(179,255,255);
